@@ -1,0 +1,75 @@
+name: infra
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Never run two OpenTofu operations against the same environment at once.
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VAR_use_localstack: "false"
+  TF_VAR_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
+
+jobs:
+  plan:
+    name: Plan
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.TF_VAR_region }}
+
+      - name: tofu fmt
+        run: tofu fmt -check -recursive
+
+      - name: tofu init
+        run: tofu init
+
+      - name: tofu validate
+        run: tofu validate
+
+      - name: tofu plan
+        run: tofu plan -no-color
+
+  apply:
+    name: Apply
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.TF_VAR_region }}
+
+      - name: tofu init
+        run: tofu init
+
+      - name: tofu apply
+        run: tofu apply -auto-approve -no-color
