@@ -17,27 +17,48 @@ concurrency:
 env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-  TF_VAR_use_localstack: "false"
+  # Target the LocalStack container started below instead of real AWS.
+  TF_VAR_use_localstack: "true"
+  TF_VAR_localstack_endpoint: http://localhost:4566
   TF_VAR_region: ${{ vars.AWS_REGION || 'us-east-1' }}
   TF_VAR_environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
+  # Dummy credentials. LocalStack accepts any values; these only exist so that
+  # anything reading the standard AWS env vars (CLI, SDKs) finds something.
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
 
 jobs:
   plan:
     name: Plan
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    environment: production
+    services:
+      localstack:
+        image: localstack/localstack-pro:latest
+        ports:
+          - 4566:4566
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+          SERVICES: ec2,s3,sts,iam
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: opentofu/setup-opentofu@v1
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.TF_VAR_region }}
+      - name: Wait for LocalStack
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4566/_localstack/health && exit 0
+            sleep 2
+          done
+          echo "LocalStack did not become ready" >&2
+          exit 1
 
       - name: tofu fmt
         run: tofu fmt -check -recursive
@@ -55,18 +76,32 @@ jobs:
     name: Apply
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
+    services:
+      localstack:
+        image: localstack/localstack-pro:latest
+        ports:
+          - 4566:4566
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+          SERVICES: ec2,s3,sts,iam
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: opentofu/setup-opentofu@v1
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.TF_VAR_region }}
+      - name: Wait for LocalStack
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4566/_localstack/health && exit 0
+            sleep 2
+          done
+          echo "LocalStack did not become ready" >&2
+          exit 1
 
       - name: tofu init
         run: tofu init
